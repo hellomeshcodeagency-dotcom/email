@@ -1,0 +1,155 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FHG Manual Quiz</title><style>*{box-sizing:border-box}body{margin:0;background:#f4f7f2;color:#182018;font-family:system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:900px;margin:auto;padding:20px 14px 45px}.card{background:#fff;border:1px solid #dce6d8;border-radius:20px;padding:25px;box-shadow:0 10px 30px #0000000b}.badge{display:inline-block;background:#edf6e8;color:#477631;border-radius:99px;padding:6px 10px;font-size:12px;font-weight:800}.sub{color:#657064}.top{display:flex;justify-content:space-between;gap:10px;align-items:center}.timer{font-weight:900;padding:9px 13px;border-radius:11px;background:#eef5e9}.timer.warn{background:#fff0d5;color:#9a5b00}.timer.danger{background:#ffe1e1;color:#a00000}.bar{height:8px;background:#e8eee5;border-radius:99px;overflow:hidden;margin:14px 0 22px}.fill{height:100%;background:#67a347;width:0}.q{font-size:21px;line-height:1.45;font-weight:800}.opt{display:block;border:2px solid #e0e7de;border-radius:13px;padding:13px;margin:10px 0;cursor:pointer}.opt:hover{border-color:#82ad6e;background:#f8fbf6}.opt input{accent-color:#5f963f}.actions{display:flex;justify-content:space-between;gap:10px;margin-top:20px}button{border:0;border-radius:12px;padding:12px 18px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.primary{background:#5f963f;color:white}.secondary{background:#edf1eb;color:#253025}.hidden{display:none}.score{font-size:45px;font-weight:900}.review{margin-top:20px;border-top:1px solid #e2e8df}.item{padding:14px 0;border-bottom:1px solid #e7ebe4}.ok{color:#2e7d32}.bad{color:#b42318}.note{font-size:13px;color:#687168;line-height:1.5}.err{color:#b42318;font-weight:700;font-size:14px;margin:10px 0 0}.resume{background:#f3f8ef;border:1px solid #d5e6ca;border-radius:14px;padding:14px;margin:16px 0}.spin{width:38px;height:38px;border:4px solid #e3ecdf;border-top-color:#5f963f;border-radius:50%;animation:s 1s linear infinite;margin:10px 0 16px}@keyframes s{to{transform:rotate(360deg)}}@media(max-width:600px){.card{padding:18px;border-radius:16px}.q{font-size:18px}.actions button{flex:1}}</style></head><body><div class="wrap"><div class="card">
+
+<section id="intro"><span class="badge">FHG COMPLETE ASSESSMENT • 50 QUESTIONS</span><h1>FHG Manual + Health & Product Knowledge Assessment</h1><p class="sub">50 questions covering the FHG Manual and Health & Product Knowledge.</p><ul><li>25-minute time limit</li><li>One attempt per browser/device</li><li>Automatic submission when time expires</li><li>Score, percentage and answer review</li></ul>
+<div id="resumeBox" class="resume hidden"><strong>You have an unfinished attempt</strong><p class="note" style="margin:6px 0 10px">Started as <b id="resumeName"></b>. Your timer kept running while you were away.</p><button class="primary" id="resumeBtn">Resume Quiz</button></div>
+<div id="newBox"><label for="studentName" style="display:block;font-weight:800;margin:18px 0 7px">Full Name</label><input id="studentName" type="text" placeholder="Enter your full name" autocomplete="name" maxlength="80" style="width:100%;padding:13px 14px;border:2px solid #dfe7dc;border-radius:12px;font-size:16px;outline:none"><button class="primary" id="start" style="margin-top:14px">Start Quiz</button></div>
+<p class="err hidden" id="introErr"></p>
+<p class="note">The one-attempt lock is stored in browser storage. Clearing site data or switching browser/device can allow another attempt.</p></section>
+
+<section id="locked" class="hidden"><h2>Quiz Already Completed</h2><p>This quiz has already been submitted on this browser/device.</p></section>
+
+<section id="quiz" class="hidden"><div class="top"><div><strong id="meta"></strong><div id="participant" class="note"></div></div><span class="timer" id="timer">25:00</span></div><div class="bar"><div class="fill" id="fill"></div></div><div id="box"></div><div class="actions"><button class="secondary" id="back">Back</button><button class="primary" id="next">Next</button></div></section>
+
+<section id="submitting" class="hidden"><span class="badge">SUBMITTING</span><div class="spin" id="spin"></div><h2 id="subTitle">Submitting your answers…</h2><p class="note" id="subMsg">Please keep this page open.</p><button class="primary hidden" id="retry">Retry Submission</button></section>
+
+<section id="result" class="hidden"><span class="badge">RESULT</span><h1>Quiz Completed</h1><p><strong>Participant:</strong> <span id="resultName"></span></p><div class="score" id="score"></div><h3 id="status"></h3><p id="time"></p><div class="review" id="review"></div></section>
+
+</div></div><script>
+const KEY='fhg_combined_quiz_50_v1',AKEY=KEY+'_attempt',API='/api';
+let Q=[],TOTAL=25*60,i=0,a=[],started=0,interval=null,participantName='',attemptId=null,submitting=false,lastExpired=false;
+const $=x=>document.getElementById(x);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const letter=n=>String.fromCharCode(65+n);
+const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+
+function show(id){['intro','locked','quiz','submitting','result'].forEach(s=>$(s).classList.toggle('hidden',s!==id))}
+function completed(){return localStorage.getItem(KEY)==='completed'}
+function getAttempt(){try{return JSON.parse(localStorage.getItem(AKEY)||'null')}catch(e){return null}}
+function persist(){try{localStorage.setItem(AKEY,JSON.stringify({id:attemptId,name:participantName,answers:a,i}))}catch(e){}}
+function introError(msg){$('introErr').textContent=msg;$('introErr').classList.toggle('hidden',!msg)}
+
+async function api(path,body){
+  const r=await fetch(API+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){const e=new Error(d.error||'Request failed ('+r.status+')');e.status=r.status;throw e}
+  return d;
+}
+
+function render(){
+  const q=Q[i],multi=q.multi;
+  $('meta').textContent=`Question ${i+1} of ${Q.length}`;
+  $('fill').style.width=((i+1)/Q.length*100)+'%';
+  const chosen=Array.isArray(a[i])?a[i]:a[i]==null?[]:[a[i]];
+  $('box').innerHTML=`<div class="q">${esc(q.q)}</div><p class="note">${multi?'Select all three correct answers.':'Select one answer.'}</p>`+
+    q.options.map((o,n)=>`<label class="opt"><input type="${multi?'checkbox':'radio'}" name="ans" value="${n}" ${chosen.includes(n)?'checked':''}> <b>${letter(n)}.</b> ${esc(o)}</label>`).join('');
+  $('box').querySelectorAll('input').forEach(x=>x.onchange=()=>{
+    if(multi){const v=Array.isArray(a[i])?a[i]:[];a[i]=x.checked?[...v,+x.value]:v.filter(z=>z!==+x.value)}else a[i]=+x.value;
+    persist();
+  });
+  $('back').disabled=i===0;
+  $('next').textContent=i===Q.length-1?'Submit Quiz':'Next';
+}
+
+function save(){
+  if(!Q.length)return;
+  const q=Q[i],sel=[...$('box').querySelectorAll('input:checked')].map(x=>+x.value);
+  a[i]=q.multi?sel:(sel.length?sel[0]:null);
+  persist();
+}
+
+function tick(){
+  const r=Math.max(0,TOTAL-Math.floor((Date.now()-started)/1000));
+  $('timer').textContent=fmt(r);
+  $('timer').className='timer'+(r<=60?' danger':r<=300?' warn':'');
+  if(!r)finish(true);
+}
+
+async function start(resume){
+  if(completed()){show('locked');return}
+  introError('');
+  const saved=resume?getAttempt():null;
+  let body;
+  if(saved&&saved.id){body={id:saved.id}}
+  else{
+    const name=$('studentName').value.trim();
+    if(name.length<2){introError('Please enter your full name before starting the quiz.');$('studentName').focus();return}
+    body={name};
+  }
+  const btn=resume?$('resumeBtn'):$('start'),label=btn.textContent;
+  btn.disabled=true;btn.textContent='Starting…';
+  try{
+    const d=await api('/start',body);
+    attemptId=d.id;participantName=d.name;Q=d.questions;TOTAL=d.totalSeconds;
+    a=saved&&Array.isArray(saved.answers)&&saved.answers.length===Q.length?saved.answers:Array(Q.length).fill(null);
+    i=saved?Math.min(Math.max(0,saved.i|0),Q.length-1):0;
+    started=Date.now()-d.elapsed*1000;
+    localStorage.setItem(KEY,'in_progress');
+    persist();
+    $('participant').textContent='Participant: '+participantName;
+    show('quiz');render();
+    window.onbeforeunload=()=> 'Your quiz is in progress.';
+    interval=setInterval(tick,250);tick();
+  }catch(e){
+    btn.disabled=false;btn.textContent=label;
+    if(e.status===409){localStorage.setItem(KEY,'completed');localStorage.removeItem(AKEY);show('locked');return}
+    if(e.status===404&&saved){localStorage.removeItem(AKEY);localStorage.removeItem(KEY);$('resumeBox').classList.add('hidden');$('newBox').classList.remove('hidden');introError('Your previous attempt could not be found. Please start again.');return}
+    introError('Could not start the quiz: '+e.message+'. Check your internet connection and try again.');
+  }
+}
+
+async function finish(expired){
+  if(submitting)return;
+  submitting=true;lastExpired=lastExpired||!!expired;
+  clearInterval(interval);
+  if(!$('quiz').classList.contains('hidden'))save();
+  show('submitting');
+  $('spin').classList.remove('hidden');$('retry').classList.add('hidden');
+  $('subTitle').textContent='Submitting your answers…';$('subMsg').textContent='Please keep this page open.';
+  try{
+    const d=await api('/submit',{id:attemptId,answers:a,expired:lastExpired});
+    localStorage.setItem(KEY,'completed');localStorage.removeItem(AKEY);
+    window.onbeforeunload=null;
+    showResult(d);
+  }catch(e){
+    submitting=false;
+    $('spin').classList.add('hidden');$('retry').classList.remove('hidden');
+    $('subTitle').textContent='Submission failed';
+    $('subMsg').textContent=e.message+'. Your answers are saved on this device — tap Retry when you are back online.';
+  }
+}
+
+function showResult(d){
+  show('result');
+  $('resultName').textContent=d.name;
+  $('score').textContent=`${d.correct} / ${d.total} (${d.percent}%)`;
+  $('status').textContent=d.passed?'Passed':'Needs Improvement';
+  $('status').className=d.passed?'ok':'bad';
+  $('time').textContent=(d.expired?'Time expired — submitted automatically.':'Submitted before the 25-minute limit.')+' Time taken: '+fmt(d.timeTaken)+'.';
+  $('review').innerHTML=d.review.map((q,k)=>{
+    const vals=Array.isArray(q.answer)?q.answer:[q.answer];
+    const yv=q.yours==null||(Array.isArray(q.yours)&&!q.yours.length)?null:(Array.isArray(q.yours)?q.yours:[q.yours]);
+    const yours=yv?yv.map(v=>letter(v)+'. '+esc(q.options[v])).join('; '):'Not answered';
+    const corr=vals.map(v=>letter(v)+'. '+esc(q.options[v])).join('; ');
+    return `<div class="item"><b>${k+1}. ${esc(q.q)}</b><p class="${q.ok?'ok':'bad'}">${q.ok?'Correct':'Incorrect'} — Your answer: ${yours}</p><p><b>Correct answer:</b> ${corr}</p></div>`;
+  }).join('');
+}
+
+$('start').onclick=()=>start(false);
+$('resumeBtn').onclick=()=>start(true);
+$('studentName').onkeydown=e=>{if(e.key==='Enter')start(false)};
+$('retry').onclick=()=>finish(lastExpired);
+$('next').onclick=()=>{save();if(i<Q.length-1){i++;render()}else{
+  const blank=a.filter(v=>v==null||(Array.isArray(v)&&!v.length)).length;
+  if(blank&&!confirm(`You have ${blank} unanswered question${blank>1?'s':''}. Submit anyway?`))return;
+  finish(false)}};
+$('back').onclick=()=>{save();if(i>0){i--;render()}};
+
+(function init(){
+  if(completed()){show('locked');return}
+  const saved=getAttempt();
+  if(localStorage.getItem(KEY)==='in_progress'&&saved&&saved.id){
+    $('resumeName').textContent=saved.name||'';
+    $('resumeBox').classList.remove('hidden');$('newBox').classList.add('hidden');
+  }
+})();
+</script></body></html>
